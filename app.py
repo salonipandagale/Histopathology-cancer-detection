@@ -1,14 +1,16 @@
-import os
 import io
 import numpy as np
 import streamlit as st
 import torch
-import torch.nn as nn
+import torch.nn.functional as F
 from PIL import Image
-
 from torchvision import transforms
 
 from model import HistoClassifier
+
+
+# Limit PyTorch CPU threads for Render
+torch.set_num_threads(1)
 
 
 # ============================================================
