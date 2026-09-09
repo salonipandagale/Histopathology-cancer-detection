@@ -1,0 +1,45 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Dataset
+data/
+*.h5
+*.h5.gz
+*.zip
+
+# Model checkpoints
+*.pth
+*.pt
+*.ckpt
+
+# Outputs
+outputs/checkpoints/
+outputs/logs/
+
+# Temporary files
+*.tmp
+*.temp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Environment variables
+.env
+
+# Streamlit
+.streamlit/secrets.toml
