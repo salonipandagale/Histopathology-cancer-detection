@@ -5,11 +5,18 @@ import streamlit as st
 import torch
 import torch.nn as nn
 from PIL import Image
-import matplotlib.pyplot as plt
 
 from torchvision import transforms
 
 from model import HistoClassifier
+
+
+# ============================================================
+# PYTORCH CPU OPTIMIZATION
+# ============================================================
+
+torch.set_num_threads(1)
+torch.set_num_interop_threads(1)
 
 
 # ============================================================
@@ -128,9 +135,11 @@ def load_model():
             f"Checkpoint not found at: {CHECKPOINT_PATH}"
         )
 
+    # Always load checkpoint on CPU first
     checkpoint = torch.load(
         CHECKPOINT_PATH,
-        map_location=DEVICE
+        map_location="cpu",
+        weights_only=True
     )
 
     backbone = checkpoint.get(
@@ -144,9 +153,9 @@ def load_model():
     )
 
     model = HistoClassifier(
-    backbone=backbone,
-    pretrained=False,
-    hidden_dim=hidden_dim
+        backbone=backbone,
+        pretrained=False,
+        hidden_dim=hidden_dim
     )
 
     model.load_state_dict(
@@ -154,6 +163,7 @@ def load_model():
     )
 
     model.to(DEVICE)
+
     model.eval()
 
     return model
@@ -189,10 +199,12 @@ def find_last_conv_layer(model):
     for name, module in model.named_modules():
 
         if isinstance(module, nn.Conv2d):
+
             last_conv = module
             last_name = name
 
     if last_conv is None:
+
         raise RuntimeError(
             "No Conv2d layer found in the model."
         )
@@ -201,21 +213,50 @@ def find_last_conv_layer(model):
 
 
 # ============================================================
+# PREDICTION
+# ============================================================
+
+def predict(model, image_tensor):
+
+    model.eval()
+
+    with torch.inference_mode():
+
+        output = model(
+            image_tensor
+        )
+
+        probability = torch.sigmoid(
+            output
+        ).item()
+
+    return probability
+
+
+# ============================================================
 # GRAD-CAM
 # ============================================================
 
 def generate_gradcam(model, image_tensor):
 
-    target_layer, layer_name = find_last_conv_layer(model)
+    target_layer, layer_name = find_last_conv_layer(
+        model
+    )
 
     activations = []
     gradients = []
 
     def forward_hook(module, input, output):
-        activations.append(output)
+
+        activations.append(
+            output
+        )
 
     def backward_hook(module, grad_input, grad_output):
-        gradients.append(grad_output[0])
+
+        gradients.append(
+            grad_output[0]
+        )
 
     forward_handle = target_layer.register_forward_hook(
         forward_hook
@@ -227,99 +268,173 @@ def generate_gradcam(model, image_tensor):
 
     try:
 
-        model.zero_grad()
-
-        output = model(image_tensor)
-
-        probability = torch.sigmoid(output)
-
-        output.backward(
-            gradient=torch.ones_like(output)
+        model.zero_grad(
+            set_to_none=True
         )
 
-        activation = activations[0]
-        gradient = gradients[0]
+        # Grad-CAM requires gradients
+        with torch.enable_grad():
 
-        weights = gradient.mean(
-            dim=(2, 3),
-            keepdim=True
-        )
+            output = model(
+                image_tensor
+            )
 
-        cam = (
-            weights * activation
-        ).sum(dim=1, keepdim=True)
+            output.backward()
 
-        cam = torch.relu(cam)
+            if len(activations) == 0:
 
-        cam = torch.nn.functional.interpolate(
-            cam,
-            size=(
-                image_tensor.shape[2],
-                image_tensor.shape[3]
-            ),
-            mode="bilinear",
-            align_corners=False
-        )
+                raise RuntimeError(
+                    "Grad-CAM activation was not captured."
+                )
 
-        cam = cam.squeeze().detach().cpu().numpy()
+            if len(gradients) == 0:
 
+                raise RuntimeError(
+                    "Grad-CAM gradient was not captured."
+                )
+
+            activation = activations[0]
+            gradient = gradients[0]
+
+            # Global average pooling of gradients
+            weights = gradient.mean(
+                dim=(2, 3),
+                keepdim=True
+            )
+
+            # Weighted combination of feature maps
+            cam = (
+                weights * activation
+            ).sum(
+                dim=1,
+                keepdim=True
+            )
+
+            # Remove negative activations
+            cam = torch.relu(
+                cam
+            )
+
+            # Resize CAM to input image size
+            cam = torch.nn.functional.interpolate(
+                cam,
+                size=(
+                    IMAGE_SIZE,
+                    IMAGE_SIZE
+                ),
+                mode="bilinear",
+                align_corners=False
+            )
+
+            cam = cam.squeeze(
+                0
+            ).squeeze(
+                0
+            )
+
+            # Move only final CAM to CPU
+            cam = cam.detach().cpu().numpy()
+
+        # Normalize CAM
         cam -= cam.min()
 
-        if cam.max() > 0:
-            cam /= cam.max()
+        max_value = cam.max()
 
-        return probability.item(), cam, layer_name
+        if max_value > 0:
+
+            cam /= max_value
+
+        return cam, layer_name
 
     finally:
 
         forward_handle.remove()
         backward_handle.remove()
 
+        model.zero_grad(
+            set_to_none=True
+        )
+
 
 # ============================================================
 # CREATE GRAD-CAM OVERLAY
 # ============================================================
 
-def create_gradcam_overlay(original_image, cam):
+def create_gradcam_overlay(
+    original_image,
+    cam
+):
 
-    original = np.array(
-        original_image.resize(
-            (IMAGE_SIZE, IMAGE_SIZE)
+    original = original_image.resize(
+        (
+            IMAGE_SIZE,
+            IMAGE_SIZE
+        )
+    ).convert("RGB")
+
+    original_array = np.array(
+        original
+    ).astype(
+        np.float32
+    )
+
+    # --------------------------------------------------------
+    # Create lightweight heatmap using NumPy
+    # --------------------------------------------------------
+
+    heatmap = np.zeros_like(
+        original_array
+    )
+
+    # Red channel
+    heatmap[:, :, 0] = (
+        cam * 255
+    )
+
+    # Green channel
+    heatmap[:, :, 1] = np.maximum(
+        0,
+        (
+            1 -
+            np.abs(cam - 0.5) * 2
+        ) * 255
+    )
+
+    # Small blue component
+    heatmap[:, :, 2] = (
+        (1 - cam) * 50
+    )
+
+    heatmap = np.clip(
+        heatmap,
+        0,
+        255
+    ).astype(
+        np.uint8
+    )
+
+    # --------------------------------------------------------
+    # Blend original image and heatmap
+    # --------------------------------------------------------
+
+    overlay = (
+        0.60 * original_array +
+        0.40 * heatmap.astype(
+            np.float32
         )
     )
 
-    fig, ax = plt.subplots(
-        figsize=(6, 6)
+    overlay = np.clip(
+        overlay,
+        0,
+        255
+    ).astype(
+        np.uint8
     )
 
-    ax.imshow(original)
-
-    ax.imshow(
-        cam,
-        cmap="jet",
-        alpha=0.45
+    return Image.fromarray(
+        overlay
     )
-
-    ax.axis("off")
-
-    plt.tight_layout(
-        pad=0
-    )
-
-    buffer = io.BytesIO()
-
-    plt.savefig(
-        buffer,
-        format="png",
-        bbox_inches="tight",
-        pad_inches=0
-    )
-
-    plt.close(fig)
-
-    buffer.seek(0)
-
-    return Image.open(buffer)
 
 
 # ============================================================
@@ -328,7 +443,9 @@ def create_gradcam_overlay(original_image, cam):
 
 with st.sidebar:
 
-    st.header("Model Information")
+    st.header(
+        "Model Information"
+    )
 
     st.write(
         "**Architecture:** ResNet18"
@@ -352,7 +469,9 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("Development Metrics")
+    st.subheader(
+        "Development Metrics"
+    )
 
     st.metric(
         "Accuracy",
@@ -393,7 +512,9 @@ with st.sidebar:
 # ============================================================
 
 st.markdown(
-    '<div class="title">Histopathology Cancer Detection</div>',
+    '<div class="title">'
+    'Histopathology Cancer Detection'
+    '</div>',
     unsafe_allow_html=True
 )
 
@@ -427,7 +548,9 @@ except Exception as e:
 # IMAGE UPLOAD
 # ============================================================
 
-st.subheader("Upload Histopathology Image")
+st.subheader(
+    "Upload Histopathology Image"
+)
 
 uploaded_file = st.file_uploader(
     "Upload a histopathology tissue patch",
@@ -447,14 +570,20 @@ if uploaded_file is not None:
 
     try:
 
+        # ----------------------------------------------------
+        # LOAD IMAGE
+        # ----------------------------------------------------
+
         image = Image.open(
             uploaded_file
-        ).convert("RGB")
+        ).convert(
+            "RGB"
+        )
 
         st.divider()
 
         # ----------------------------------------------------
-        # ORIGINAL IMAGE
+        # DISPLAY ORIGINAL IMAGE
         # ----------------------------------------------------
 
         col1, col2 = st.columns(
@@ -469,30 +598,32 @@ if uploaded_file is not None:
 
             st.image(
                 image,
-                use_container_width=True
+                width="stretch"
             )
 
         # ----------------------------------------------------
-        # PREPROCESS
+        # PREPROCESS IMAGE
         # ----------------------------------------------------
 
         image_tensor = transform(
             image
-        ).unsqueeze(0)
+        ).unsqueeze(
+            0
+        )
 
         image_tensor = image_tensor.to(
             DEVICE
         )
 
         # ----------------------------------------------------
-        # PREDICTION + GRAD-CAM
+        # PREDICTION
         # ----------------------------------------------------
 
         with st.spinner(
             "Analyzing image..."
         ):
 
-            probability, cam, layer_name = generate_gradcam(
+            probability = predict(
                 model,
                 image_tensor
             )
@@ -512,7 +643,7 @@ if uploaded_file is not None:
             confidence = 1 - probability
 
         # ----------------------------------------------------
-        # RESULT
+        # DISPLAY RESULT
         # ----------------------------------------------------
 
         with col2:
@@ -530,7 +661,8 @@ if uploaded_file is not None:
                     </div>
 
                     <div class="probability">
-                        Confidence: {confidence * 100:.2f}%
+                        Confidence:
+                        {confidence * 100:.2f}%
                     </div>
 
                 </div>
@@ -539,7 +671,7 @@ if uploaded_file is not None:
             )
 
             st.write(
-                f"Probability of cancerous tissue: "
+                "Probability of cancerous tissue: "
                 f"**{probability * 100:.2f}%**"
             )
 
@@ -562,7 +694,7 @@ if uploaded_file is not None:
                 )
 
         # ----------------------------------------------------
-        # GRAD-CAM
+        # GRAD-CAM SECTION
         # ----------------------------------------------------
 
         st.divider()
@@ -572,39 +704,77 @@ if uploaded_file is not None:
         )
 
         st.write(
-            "The Grad-CAM visualization highlights "
-            "regions of the image that contributed "
-            "to the model's prediction."
+            "Generate a visual explanation showing "
+            "the regions that contributed most to "
+            "the model's prediction."
         )
 
-        gradcam_image = create_gradcam_overlay(
-            image,
-            cam
+        # ----------------------------------------------------
+        # OPTIONAL GRAD-CAM BUTTON
+        # ----------------------------------------------------
+
+        generate_explanation = st.button(
+            "Generate Grad-CAM Explanation",
+            type="primary"
         )
 
-        col3, col4 = st.columns(
-            [1, 1]
-        )
+        if generate_explanation:
 
-        with col3:
+            try:
 
-            st.image(
-                image,
-                caption="Original Image",
-                use_container_width=True
-            )
+                with st.spinner(
+                    "Generating Grad-CAM explanation..."
+                ):
 
-        with col4:
+                    cam, layer_name = generate_gradcam(
+                        model,
+                        image_tensor
+                    )
 
-            st.image(
-                gradcam_image,
-                caption="Grad-CAM Visualization",
-                use_container_width=True
-            )
+                    gradcam_image = create_gradcam_overlay(
+                        image,
+                        cam
+                    )
 
-        st.caption(
-            f"Grad-CAM target layer: {layer_name}"
-        )
+                st.success(
+                    "Grad-CAM explanation generated successfully."
+                )
+
+                col3, col4 = st.columns(
+                    [1, 1]
+                )
+
+                with col3:
+
+                    st.image(
+                        image,
+                        caption="Original Image",
+                        width="stretch"
+                    )
+
+                with col4:
+
+                    st.image(
+                        gradcam_image,
+                        caption="Grad-CAM Visualization",
+                        width="stretch"
+                    )
+
+                st.caption(
+                    f"Grad-CAM target layer: {layer_name}"
+                )
+
+            except Exception as gradcam_error:
+
+                st.warning(
+                    "Prediction was successful, but "
+                    "Grad-CAM could not be generated "
+                    "on the deployment server."
+                )
+
+                st.caption(
+                    f"Grad-CAM error: {gradcam_error}"
+                )
 
         # ----------------------------------------------------
         # MODEL DETAILS
@@ -616,7 +786,9 @@ if uploaded_file is not None:
             "Analysis Details"
         )
 
-        detail_col1, detail_col2, detail_col3 = st.columns(3)
+        detail_col1, detail_col2, detail_col3 = st.columns(
+            3
+        )
 
         with detail_col1:
 
@@ -706,10 +878,16 @@ if uploaded_file is not None:
             f"Error while processing the image: {e}"
         )
 
+
+# ============================================================
+# INITIAL INSTRUCTIONS
+# ============================================================
+
 else:
 
     st.info(
-        "Upload a histopathology image patch to begin analysis."
+        "Upload a histopathology image patch "
+        "to begin analysis."
     )
 
     st.markdown(
@@ -720,6 +898,7 @@ else:
         2. The image is resized and normalized.
         3. ResNet18 extracts visual features.
         4. The model predicts the probability of cancer.
-        5. Grad-CAM generates a visual explanation.
+        5. Click **Generate Grad-CAM Explanation**
+           to visualize important image regions.
         """
     )
