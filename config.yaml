@@ -1,0 +1,100 @@
+# ============================================================
+# Histopathology WSI Cancer Detector — Configuration
+# CPU development configuration
+# ============================================================
+
+# --- Data ---
+data:
+  dataset: "pcam"
+  data_dir: "./data/pcamv1"
+
+  # Smaller image size for faster CPU experimentation
+  img_size: 128
+
+  patch_size: 96
+  overlap: 0
+  tissue_threshold: 0.5
+
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+
+  num_workers: 0
+
+# --- Model ---
+model:
+  # Lightweight model for CPU testing
+  backbone: "resnet18"
+  pretrained: true
+
+  dropout: 0.4
+  hidden_dim: 128
+  num_classes: 1
+
+# --- Training ---
+training:
+  # One epoch only for pipeline verification
+  epochs: 1
+
+  # Must contain a number
+  batch_size: 16
+
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+
+  optimizer: "adamw"
+  scheduler: "cosine"
+
+  warmup_epochs: 0
+  pos_weight: 1.0
+  grad_clip: 1.0
+  seed: 42
+
+# --- Hard Negative Mining ---
+# Disabled during the initial CPU smoke test
+hnm:
+  enabled: false
+  start_epoch: 3
+  oversample_factor: 3
+  fp_threshold: 0.4
+  fn_threshold: 0.6
+
+# --- Augmentation ---
+augmentation:
+  train:
+    horizontal_flip: 0.5
+    vertical_flip: 0.5
+    rotation_limit: 15
+
+    color_jitter:
+      brightness: 0.2
+      contrast: 0.2
+      saturation: 0.2
+      hue: 0.1
+
+    elastic_transform: false
+    gaussian_blur: 0.0
+    random_grayscale: 0.0
+
+  val:
+    normalize_only: true
+
+# --- Slide-Level Aggregation ---
+aggregation:
+  method: "mean_topk"
+  top_k: 10
+
+# --- Paths ---
+paths:
+  checkpoint_dir: "./outputs/checkpoints"
+  log_dir: "./outputs/logs"
+  gradcam_dir: "./outputs/gradcam"
+  results_dir: "./outputs/results"
+
+# --- Logging ---
+logging:
+  use_wandb: false
+  project_name: "histopath-wsi"
+
+  # Print less frequently
+  log_interval: 10
