@@ -32,7 +32,6 @@ pcam_download/
 
 # Model checkpoints
 
-*.pth
 *.pt
 *.ckpt
 
