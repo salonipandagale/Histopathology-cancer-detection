@@ -8,7 +8,7 @@ The project explores the application of **AI in Digital Pathology**, combining i
 
 ## Live Demo
 
-**Streamlit App:** [Live Demo](YOUR_DEPLOYED_APP_URL)
+**Streamlit App:** [Live Demo](https://histopathology-cancer-detection.onrender.com/)
 
 Upload a histopathology image patch to get:
 
