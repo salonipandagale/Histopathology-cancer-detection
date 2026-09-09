@@ -1,45 +1,81 @@
-# Virtual environment
+
+# Virtual environments
+
 .venv/
 venv/
 env/
+ENV/
+
 
 # Python
+
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyd
+
 
 # Jupyter
+
 .ipynb_checkpoints/
 
-# Dataset
+
+# Dataset files
+
 data/
+pcam_download/
+
 *.h5
 *.h5.gz
 *.zip
 
+
 # Model checkpoints
+
 *.pth
 *.pt
 *.ckpt
 
-# Outputs
-outputs/checkpoints/
+# Keep the trained checkpoint required for deployment
+!outputs/
+!outputs/checkpoints/
+!outputs/checkpoints/resnet18_pcam_best.pth
+
+
+# Training / temporary outputs
+
 outputs/logs/
 
+
 # Temporary files
+
 *.tmp
 *.temp
 
+
 # OS files
+
 .DS_Store
 Thumbs.db
+desktop.ini
+
 
 # IDE
 .vscode/
 .idea/
 
-# Environment variables
-.env
 
-# Streamlit
+# Environment variables / secrets
+
+.env
+.env.*
+!.env.example
+
+# Streamlit secrets
 .streamlit/secrets.toml
+
+
+# Build / cache files
+
+*.log
+*.cache
