@@ -14,13 +14,6 @@ from model import HistoClassifier
 torch.set_num_threads(1)
 
 
-# ============================================================
-# PYTORCH CPU OPTIMIZATION
-# ============================================================
-
-torch.set_num_threads(1)
-torch.set_num_interop_threads(1)
-
 
 # ============================================================
 # PAGE CONFIGURATION
