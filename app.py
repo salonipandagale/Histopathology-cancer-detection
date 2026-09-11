@@ -312,7 +312,7 @@ def generate_gradcam(model, image_tensor):
             )
 
             # Resize CAM to input image size
-            cam = torch.nn.functional.interpolate(
+            cam = torch.F.interpolate(
                 cam,
                 size=(
                     IMAGE_SIZE,
