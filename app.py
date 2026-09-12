@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from PIL import Image
 from torchvision import transforms
 
-from model import HistoClassifier
+from src.model import HistoClassifier
 
 
 # Limit PyTorch CPU threads for Render
